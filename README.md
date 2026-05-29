@@ -107,11 +107,43 @@ only the **timing** and the **spend bound**:
 - unit-tested with **zero network** (inject a fake `touch_fn` + `sleep`);
 - no secret handling inside the library.
 
+## Prefix compaction (complementary)
+
+The keepalive prevents most misses. For the ones that slip through — first run,
+keepalive not yet started, TTL tighter than expected — `compact_prefix` cheapens
+the miss by shrinking what the provider must reprocess.
+
+It keeps the system prompt and the most-recent K turns **byte-identical** (so
+the provider can cache them immediately) and replaces older turns with a compact
+deterministic digest. A typical 88k-token prefix compacts to ~20k tokens — a
+**4x reduction** on the miss cost.
+
+```python
+from prompt_cache_keepalive import compact_prefix, CompactionResult
+
+result: CompactionResult = compact_prefix(
+    messages,           # full conversation history
+    system=SYSTEM,      # kept verbatim; helps cache re-warm after miss
+    keep_recent_turns=6,
+)
+# result.ratio  => ~4x or better on an 88k prefix
+# result.compacted  => send this to the provider on the next request
+```
+
+`compact_prefix` is **pure-stdlib and network-free**. The optional
+`llm_summariser` callback (default: deterministic head/tail digest) can be
+replaced with any callable that returns a summary string — injection makes it
+trivially testable.
+
+**What compaction does not do:** it does not prevent the miss (that is the
+keepalive's job) and it does not warm the cache by itself. Run both: keepalive
+during idle, compaction as the fallback when a miss happens anyway.
+
 ## Honest limitations
 
-- **It prevents the miss; it doesn't shrink the prefix.** A complementary
-  technique — *pre-idle prefix compaction* — shrinks what you'd reprocess *if* a
-  miss happens. Different layers; use both.
+- **It prevents the miss; it doesn't shrink the prefix.** Pair it with
+  `compact_prefix` (above) to cheapen the misses that do slip through.
+  Different layers; use both.
 - **It only helps if the session resumes.** Below the breakeven resume
   probability, don't run it — the model gives you the threshold.
 - **It works *within* the TTL, not *around* it.** There's no client-side way to

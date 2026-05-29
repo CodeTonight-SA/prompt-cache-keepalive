@@ -29,8 +29,13 @@ from .cost_model import (
     net_savings,
     touches_for_idle,
 )
+from .compaction import (
+    CompactionResult,
+    compact_prefix,
+    estimate_tokens,
+)
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "PromptCacheKeepalive",
@@ -43,4 +48,7 @@ __all__ = [
     "cost_with_keepalive",
     "cost_without_keepalive",
     "touches_for_idle",
+    "CompactionResult",
+    "compact_prefix",
+    "estimate_tokens",
 ]

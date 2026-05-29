@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prompt-cache-keepalive"
-version = "0.1.0"
+version = "0.2.0"
 description = "Keep an LLM prompt cache warm across idle gaps — provider-agnostic, with a proven cost model."
 readme = "README.md"
 license = { text = "MIT" }
