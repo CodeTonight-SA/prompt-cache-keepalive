@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prompt-cache-keepalive"
+version = "0.1.0"
+description = "Keep an LLM prompt cache warm across idle gaps — provider-agnostic, with a proven cost model."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "CodeTonight" }]
+keywords = ["llm", "anthropic", "prompt-cache", "caching", "tokens", "cost-optimization"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Intended Audience :: Developers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["prompt_cache_keepalive*"]
