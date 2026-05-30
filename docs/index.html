@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>prompt-cache-keepalive — give your LLM prompt cache a heartbeat</title>
+<meta name="description" content="Keep an LLM prompt cache warm across idle gaps. The cache has a ~5-minute TTL; a touch under ~270s keeps the prefix warm so the next turn reads cache instead of re-creating it. Provider-agnostic, zero dependencies, with a cost model that proves the savings.">
+<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'&gt;&lt;text y='14' font-size='14'&gt;&#9829;&lt;/text&gt;&lt;/svg&gt;">
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #161922;
+    --panel-2: #1c2030;
+    --ink: #e7eaf0;
+    --muted: #9aa3b2;
+    --line: #262b3a;
+    --accent: #5ec8a0;
+    --accent-dim: #2c5e4f;
+    --warn: #e0a96d;
+    --code-bg: #0b0d13;
+    --max: 860px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f7f8fa; --panel: #ffffff; --panel-2: #f0f2f6; --ink: #1a1d24;
+      --muted: #5a6472; --line: #e2e6ee; --accent: #1f9d76; --accent-dim: #b9e6d6;
+      --warn: #a96a2c; --code-bg: #f0f2f6;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+  code, pre {
+    font-family: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+  }
+  code { background: var(--code-bg); padding: 0.12em 0.4em; border-radius: 5px; font-size: 0.88em; }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-size: 0.86em; line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; }
+
+  header.hero {
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, var(--panel) 0%, var(--bg) 100%);
+    padding: 56px 0 44px;
+  }
+  .badge-line { font-size: 0.78em; color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 14px; }
+  h1 { font-size: 2.1rem; line-height: 1.15; margin: 0 0 12px; letter-spacing: -0.02em; }
+  h1 .heart { color: var(--accent); }
+  .tagline { font-size: 1.18rem; color: var(--muted); margin: 0 0 26px; max-width: 36ch; }
+  .cta { display: flex; flex-wrap: wrap; gap: 12px; }
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 9px;
+    font-weight: 600; font-size: 0.95rem; border: 1px solid var(--line);
+  }
+  .btn.primary { background: var(--accent); color: #07120d; border-color: var(--accent); }
+  .btn.primary:hover { text-decoration: none; filter: brightness(1.06); }
+  .btn.ghost { background: var(--panel-2); color: var(--ink); }
+  .btn.ghost:hover { text-decoration: none; border-color: var(--accent); }
+
+  main { padding: 8px 0 64px; }
+  section { padding: 36px 0; border-bottom: 1px solid var(--line); }
+  section:last-child { border-bottom: none; }
+  h2 { font-size: 1.45rem; margin: 0 0 8px; letter-spacing: -0.01em; }
+  h2 .lead { color: var(--accent); }
+  h3 { font-size: 1.08rem; margin: 26px 0 8px; }
+  .sub { color: var(--muted); margin-top: 0; }
+  p { margin: 14px 0; }
+
+  .diagram {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 10px;
+    padding: 18px; overflow-x: auto; white-space: pre; color: var(--ink);
+    font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 0.8rem; line-height: 1.5;
+  }
+  .diagram .warm { color: var(--accent); }
+  .diagram .cold { color: var(--warn); }
+
+  .callout {
+    background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 16px 18px; margin: 22px 0;
+  }
+  .callout strong { color: var(--ink); }
+
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+  .card h3 { margin-top: 0; }
+  .card p { font-size: 0.93rem; color: var(--muted); margin: 8px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  td.pos { color: var(--accent); font-weight: 600; }
+  td.neg { color: var(--warn); font-weight: 600; }
+
+  .formula {
+    background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 18px; margin: 16px 0; font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 0.92rem; overflow-x: auto;
+  }
+  .formula .hl { color: var(--accent); }
+
+  footer { padding: 30px 0 50px; color: var(--muted); font-size: 0.88rem; }
+  footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+
+  @media (max-width: 620px) {
+    h1 { font-size: 1.7rem; }
+    .cards { grid-template-columns: 1fr; }
+    section { padding: 28px 0; }
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="badge-line">Python 3.9+ &middot; zero dependencies &middot; MIT</div>
+    <h1>prompt-cache-keepalive <span class="heart">&#9829;</span></h1>
+    <p class="tagline">Your LLM prompt cache has a 5-minute memory. Give it a heartbeat.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/CodeTonight-SA/prompt-cache-keepalive">View on GitHub</a>
+      <a class="btn ghost" href="#quickstart">Quickstart</a>
+      <a class="btn ghost" href="#breakeven">When it pays</a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <section id="what">
+    <div class="wrap">
+      <h2>What it is <span class="lead">— in plain English</span></h2>
+      <p class="sub">No jargon required.</p>
+      <p>
+        Modern LLM APIs let you <strong>cache a long conversation prefix</strong>: you pay full
+        price to process it once, then a tiny fraction of that price on every later turn that
+        re-uses it. It is how a long coding session stays cheap turn after turn.
+      </p>
+      <p>
+        The catch: the cache only remembers your prefix for a <strong>short while after the last
+        use</strong>. Step away for a coffee, come back six minutes later, and the cache has
+        forgotten everything. Your next turn has to re-process the <em>entire</em> prefix at full
+        price &mdash; as if you had never cached it at all.
+      </p>
+      <p>
+        <strong>prompt-cache-keepalive</strong> sends a tiny "touch" request every few minutes
+        while you are idle. Each touch re-uses the cached prefix, which resets the forget-timer, so
+        the prefix stays warm and your next real turn is cheap. It is a heartbeat that keeps the
+        cache alive between your messages.
+      </p>
+      <div class="callout">
+        A touch is a <strong>minimal request that re-uses the cached prefix</strong>. Re-using the
+        cache counts as a <em>read</em>, and a read resets the timer &mdash; so the prefix never goes
+        cold and the next real turn never pays the full re-processing price.
+      </div>
+    </div>
+  </section>
+
+  <section id="mechanic">
+    <div class="wrap">
+      <h2>The mechanic <span class="lead">— a wake under ~270 seconds</span></h2>
+      <p>
+        Anthropic's prompt cache has a <strong>~5-minute (300-second) idle timer</strong> that
+        slides forward every time the prefix is used. So the rule is simple:
+        <strong>touch the cache at least once inside every 300-second window</strong> and it never
+        expires.
+      </p>
+      <p>
+        In practice you touch a little early &mdash; the default is every <strong>270 seconds</strong>
+        (300 minus a 30-second safety margin) &mdash; so that even a slow request still lands inside
+        the window. If you run an <strong>autonomous loop or scheduler</strong> instead of waiting
+        on a person, the same idea is a <strong>sub-270s wake</strong>: schedule the next iteration
+        less than 270 seconds out and the loop itself re-uses the cache, so it never crosses the
+        eviction line.
+      </p>
+
+      <div class="diagram">  <span class="cold">without keepalive</span>                 <span class="warm">with keepalive</span>
+  &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;                 &#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;&#9472;
+  turn  &#9472;[ cache written ]          turn  &#9472;[ cache written ]
+         &middot; idle 6 min                      <span class="warm">&#9829;</span> touch  (every 270s)
+         <span class="cold">&#10007; cache forgotten</span>                   <span class="warm">&#9829;</span> touch  prefix stays warm
+  resume <span class="cold">&#9608;&#9608;&#9608;&#9608; full re-process</span>         resume &#9472;[ <span class="warm">cache read</span> ]
+         ~110,000 tok-equiv                 ~8,800 tok-equiv</div>
+
+      <div class="callout">
+        <strong>The core insight.</strong> Autonomous loops should pace sub-270s wakes (or a
+        keepalive touch) during idle. Because the prompt cache has a ~5-minute (300s) TTL, a wake
+        under ~270s keeps the prefix warm and the next turn <em>reads</em> cache instead of
+        <em>re-creating</em> it.
+      </div>
+    </div>
+  </section>
+
+  <section id="breakeven">
+    <div class="wrap">
+      <h2>When it pays <span class="lead">— the 17.4% breakeven</span></h2>
+      <p>
+        A touch is <strong>not free</strong>. Re-using the prefix costs roughly a tenth of writing
+        it fresh, but ten such touches over a long quiet stretch add up. So when is the heartbeat
+        actually worth it? This package ships a cost model that answers honestly &mdash; including
+        when the answer is "don't bother".
+      </p>
+
+      <h3>The plain-English version</h3>
+      <p>
+        Every idle gap is a small bet. You pay for the touches <strong>now</strong>, during the
+        idle. The payoff only arrives <strong>if the session resumes</strong> &mdash; that's when a
+        warm cache saves you the full re-processing cost. If the session never comes back, the
+        touches were wasted.
+      </p>
+      <p>
+        So you weigh two things: the <strong>cost of the touches</strong> against the
+        <strong>re-processing cost you avoid</strong> when you do resume, scaled by how likely a
+        resume is. Below about a <strong>17.4% chance of resuming</strong>, the touches cost more
+        than they save on average &mdash; skip the keepalive. Above 17.4%, the heartbeat pays for
+        itself. Most real coding sessions resume far more often than 1-in-6, so for them keepalive
+        is an easy win.
+      </p>
+
+      <h3>The arithmetic, for one idle gap</h3>
+      <p>
+        Let <code>R</code> be the cost to re-process the prefix on a cold resume,
+        <code>c</code> the cost of one touch (a single cache read), and <code>n</code> the number
+        of touches during the gap. The expected saving, for a resume probability <code>p</code>:
+      </p>
+      <div class="formula">
+        net_savings(p) = <span class="hl">p &times; (R &minus; c)</span>  &minus;  <span class="hl">n &times; c</span>
+      </div>
+      <p>
+        The break-even point is where that equals zero, giving the threshold probability:
+      </p>
+      <div class="formula">
+        p* = <span class="hl">n &times; c</span> &divide; (R &minus; c)
+      </div>
+      <p>
+        For a typical 88,000-token prefix on Anthropic's pricing (write 1.25&times;, read 0.10&times;
+        the base input price), a 9-minute idle incurs 2 touches, and:
+      </p>
+      <div class="formula">
+        p* = (2 &times; 8,800) &divide; (110,000 &minus; 8,800) = 17,600 &divide; 101,200 &asymp; <span class="hl">0.174</span>
+      </div>
+
+      <h3>Worked numbers</h3>
+      <table>
+        <thead><tr><th>Idle gap</th><th>Touches</th><th>Resumes?</th><th>Net (88k prefix)</th></tr></thead>
+        <tbody>
+          <tr><td>9 min</td><td>2</td><td>yes</td><td class="pos">+83,600 tok</td></tr>
+          <tr><td>9 min</td><td>2</td><td>no</td><td class="neg">&minus;17,600 tok (wasted touches)</td></tr>
+          <tr><td>67 min (past cap)</td><td>12</td><td>yes</td><td class="neg">&minus;105,600 tok (honest loss)</td></tr>
+        </tbody>
+      </table>
+      <p>
+        The library <strong>caps the number of touches</strong> (default 12) near the point where
+        they would cost as much as a single re-write. So a session that goes quiet for an hour can't
+        bleed tokens forever &mdash; the heartbeat stops and lets the cache expire. No silent waste,
+        and the model tells you the threshold for your own numbers.
+      </p>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="wrap">
+      <h2>Quickstart</h2>
+      <p class="sub">Zero dependencies. The core never imports an LLM SDK &mdash; you inject the touch.</p>
+
+      <h3>Install</h3>
+      <pre><code>pip install prompt-cache-keepalive</code></pre>
+
+      <h3>Keep a cache warm</h3>
+      <pre><code>from prompt_cache_keepalive import (
+    PromptCacheKeepalive, KeepaliveConfig, TouchResult,
+)
+
+# You inject the touch — the library owns only the timing + the spend cap.
+def touch() -> TouchResult:
+    resp = client.messages.create(
+        model="claude-opus-4-8", max_tokens=1,
+        system=SYSTEM,                                # last block: cache_control
+        messages=PREFIX + [{"role": "user", "content": "."}],
+    )
+    u = resp.usage
+    return TouchResult(ok=True,
+                       cache_read_tokens=u.cache_read_input_tokens,
+                       output_tokens=u.output_tokens)
+
+keepalive = PromptCacheKeepalive(
+    touch, KeepaliveConfig(ttl_seconds=300, margin_seconds=30),
+)
+keepalive.run(is_active=lambda: session_still_open())  # touches every 270s while active</code></pre>
+
+      <h3>Prove it pays for your numbers</h3>
+      <pre><code>from prompt_cache_keepalive import (
+    CacheEconomics, net_savings, breakeven_resume_probability,
+)
+
+econ = CacheEconomics(prefix_tokens=88_000)
+net_savings(econ, idle_seconds=540, interval_seconds=270,
+            max_touches=12, resume_probability=1.0)
+# -> 83_600.0    saved on a 9-minute idle that resumes
+
+breakeven_resume_probability(econ, 540, 270, 12)
+# -> 0.174       keepalive wins whenever resume is >17.4% likely</code></pre>
+
+      <h3>For autonomous agents</h3>
+      <p>
+        If you control the request loop, you don't even need a separate touch &mdash; schedule the
+        next iteration sub-TTL. <code>KeepaliveConfig.interval()</code> gives you the number of
+        seconds to wait (270 by default): wake inside that window and the loop re-uses the cache
+        on its own.
+      </p>
+    </div>
+  </section>
+
+  <section id="more">
+    <div class="wrap">
+      <h2>Two layers, used together</h2>
+      <div class="cards">
+        <div class="card">
+          <h3>Keepalive &mdash; prevent the miss</h3>
+          <p>
+            A timed heartbeat keeps the prefix warm so a resume is a cheap cache read, not a full
+            re-write. Bounded by a spend cap so it can never waste tokens on a dead session.
+          </p>
+        </div>
+        <div class="card">
+          <h3>Compaction &mdash; cheapen the miss</h3>
+          <p>
+            For the misses that slip through (first run, keepalive not yet started),
+            <code>compact_prefix</code> shrinks what the provider must re-process &mdash; roughly a
+            4&times; reduction on a typical 88k prefix &mdash; while keeping the system prompt and the
+            most-recent turns byte-identical.
+          </p>
+        </div>
+      </div>
+      <p style="margin-top:22px;">
+        Both are pure-stdlib and network-free, so they unit-test with zero network and handle no
+        secrets. Full API, honest limitations, and at-scale math are in the
+        <a href="https://github.com/CodeTonight-SA/prompt-cache-keepalive#readme">README</a>.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>prompt-cache-keepalive &middot; MIT licensed</span>
+    <span><a href="https://github.com/CodeTonight-SA/prompt-cache-keepalive">GitHub</a> &middot; <a href="https://github.com/CodeTonight-SA/prompt-cache-keepalive/issues">Issues</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

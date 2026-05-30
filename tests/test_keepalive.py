@@ -87,3 +87,41 @@ def test_sleep_called_with_configured_interval():
     ka = PromptCacheKeepalive(_ok_touch(), config=cfg, sleep=slept.append)
     ka.run(is_active=lambda: True)
     assert slept and all(s == 255 for s in slept)  # 300 - 45
+
+
+# --- The sub-TTL timing invariant (the core insight) ---------------------
+# These pin the central claim: with the default 300s Anthropic TTL the loop
+# wakes every 270s, and the touch interval is ALWAYS strictly inside the TTL
+# so a wake lands before eviction. A regression that lets the interval reach
+# or exceed the TTL (a wake that crosses the eviction line) MUST fail here.
+
+
+def test_default_interval_is_270s_for_anthropic_5min_ttl():
+    # Anthropic's ~5-minute (300s) cache TTL, 30s safety margin -> wake at 270s,
+    # comfortably under the ~270s eviction boundary the README/docs cite.
+    assert KeepaliveConfig().ttl_seconds == 300
+    assert KeepaliveConfig().interval() == 270
+
+
+def test_interval_is_strictly_inside_ttl_across_margins():
+    # For any positive margin below the TTL, the wake must land before eviction:
+    # 0 < interval < ttl. This is the property that keeps the prefix warm.
+    for margin in (1, 15, 30, 60, 120, 299):
+        cfg = KeepaliveConfig(ttl_seconds=300, margin_seconds=margin)
+        assert 0 < cfg.interval() < cfg.ttl_seconds, f"interval crossed TTL at margin={margin}"
+
+
+def test_interval_floor_never_zero_or_negative_when_margin_swamps_ttl():
+    # A misconfigured margin >= ttl must not yield a non-positive (busy-loop)
+    # interval; the floor protects the loop. It may exceed the (tiny) TTL here,
+    # but it must stay a sane positive number.
+    cfg = KeepaliveConfig(ttl_seconds=10, margin_seconds=50, min_interval_seconds=5)
+    assert cfg.interval() == 5  # floored, positive, no spin
+
+
+def test_larger_margin_wakes_earlier_inside_the_window():
+    # A bigger safety margin must move the wake EARLIER (more headroom for a
+    # slow request), never later — monotonic in the safe direction.
+    earlier = KeepaliveConfig(ttl_seconds=300, margin_seconds=60).interval()
+    later = KeepaliveConfig(ttl_seconds=300, margin_seconds=30).interval()
+    assert earlier < later  # 240 < 270

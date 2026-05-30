@@ -6,9 +6,18 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
 [![dependencies: 0](https://img.shields.io/badge/dependencies-0-brightgreen.svg)](pyproject.toml)
+[![docs](https://img.shields.io/badge/docs-GitHub%20Pages-5ec8a0.svg)](https://codetonight-sa.github.io/prompt-cache-keepalive/)
 
 Provider-agnostic keepalive for LLM prompt caches — with a cost model that
 **proves** the savings instead of asserting them.
+
+> **The core insight.** Autonomous loops should pace **sub-270s wakes** (or a
+> keepalive touch) during idle. The Anthropic prompt cache has a **~5-minute
+> (300s) TTL**, so a wake under **~270s** keeps the prefix warm and the next
+> turn *reads* cache instead of *re-creating* it. Keepalive is worth it whenever
+> the session's **resume probability > 17.4%** (see [the breakeven](#it-proves-it-pays--and-tells-you-when-it-doesnt)).
+
+[**Documentation site →**](https://codetonight-sa.github.io/prompt-cache-keepalive/)
 
 ```bash
 pip install prompt-cache-keepalive
@@ -171,7 +180,7 @@ the loop itself re-uses the cached prefix and never crosses eviction.
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 17 tests, network-free
+pytest -q          # 37 tests, network-free
 ```
 
 ## License
