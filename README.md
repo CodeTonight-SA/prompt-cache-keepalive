@@ -148,6 +148,111 @@ trivially testable.
 keepalive's job) and it does not warm the cache by itself. Run both: keepalive
 during idle, compaction as the fallback when a miss happens anyway.
 
+## The COLD tier — a private local offload for long idles (new in 0.3)
+
+Keepalive (WARM) is the right tool for **short** idles — a coffee break, where
+pinging beats re-writing. But what about an **overnight** gap, or a session you
+`/clear` and resume tomorrow? WARM can't help: past its spend cap the cache
+expires anyway. That is what the **COLD tier** is for.
+
+**Three tiers, one cost-minimiser:**
+
+| Tier | What it is | Pays | Best for |
+|---|---|---|---|
+| **HOT** | the live context window | ~0.1× cached prefix per turn | active conversation |
+| **WARM** | keepalive-pinged server cache | ~0.1× per ping | short idle (coffee break) |
+| **COLD** | context evicted to a **private local store**, paged back **verbatim** | **0 provider tokens to store** | long/overnight idle + session boundaries |
+
+```python
+from prompt_cache_keepalive import (
+    ColdTierEconomics, should_offload_cold, Tier, FileRingStore, deny_unknown,
+)
+
+# Which tier wins for THIS idle gap? (returns COLD only where it net-saves)
+tier = should_offload_cold(
+    idle_seconds=40_000, interval_seconds=270, max_touches=12,
+    at_session_boundary=False, rederivation_tokens=200_000,
+    econ=ColdTierEconomics(prefix_tokens=100_000),
+)
+# -> Tier.COLD   (overnight gap on expensive-to-regenerate context)
+
+# The store is a stdlib, 0-dependency, mode-0600 file ring — never the system clipboard.
+store = FileRingStore(scope_policy=deny_unknown())
+ref = store.put("session-prefix", durable_context, scope="grip")   # redacted + scope-gated
+restored = store.get(ref, scope="grip")                            # byte-identical page-back
+```
+
+### The honest framing (read this — it is the whole point)
+
+> **"Zero token cost" is true only for the disk write/read leg.**
+
+A common misframing is "offload context to disk and page it back for free". That
+is a **category error**: a provider has exactly two prefix price tiers — a cache
+*write* (1.25×) and a cache *read* (0.10×) — and **disk is not a provider pricing
+tier**. Bytes paged back off disk into a live request re-enter as fresh tokens
+and bill as a cache **write**. There is no sub-0.10× tier.
+
+So COLD's real, defensible win is **avoided re-derivation**, not cheap page-back:
+the cost of *regenerating* context that is expensive to rebuild (re-reading
+files, re-running tools, re-thinking) and must be **verbatim** (a lossy summary
+won't do). `should_offload_cold` returns `COLD` **only** in that regime —
+`WARM`/`HOT`/`NONE` everywhere COLD would lose. It inverts to a loss on
+cheap-to-rebuild context, and the API says so by returning a negative from
+`cold_net_vs_rederivation`.
+
+**COLD vs compaction:** orthogonal. COLD is *lossless* (relocates bytes
+off-wire); compaction is *lossy* (~4×, cheapens a miss you still pay). A mature
+loop runs both — offload durable-idle blocks to COLD, compact whatever still
+rides the live request.
+
+### Claude Code plugin (session-boundary offload)
+
+A thin plugin wires the COLD tier to Claude Code's `SessionStart` / `Stop` /
+`PreCompact` hooks (`.claude-plugin/plugin.json`). Its **honest scope is
+session-boundary offload only**:
+
+- **It CAN**: losslessly offload durable context to the private store at a
+  boundary, and page it back **verbatim** on the next session — surviving
+  `/clear` and overnight idle at zero disk-leg token cost. Lossless where Claude
+  Code's native compaction is lossy.
+- **It CANNOT**: shrink Claude Code's *live* context window mid-turn. The harness
+  owns its own request loop and cache breakpoints; hooks fire **around** the loop,
+  never inside a turn. A restore re-injects bytes as **new** bottom-of-window
+  tokens (a fresh cache write), not an in-place restore.
+
+So the plugin's measured value is **re-derivation-avoided + lossless
+continuity**, explicitly **not** "lossless restore of the live window" and **not**
+mid-session token saving.
+
+### Privacy & safety (non-negotiable)
+
+The COLD store is a private mode-0600 file under a mode-0700 dir — **never the
+general system clipboard** (which cross-device-syncs via Universal Clipboard and
+is readable by every clipboard manager: a leak vector for context, secrets, and
+client data). Two fail-closed gates run before any write:
+
+1. **Scope allowlist** (load-bearing) — a session tagged client / financial /
+   named-org is **denied** COLD persistence entirely. Unshaped client data (a
+   bare client name, a day-rate, decision prose) has no secret *shape* a regex
+   could catch, so the sound control is **exclusion**, not redaction.
+2. **Secret redaction** (defence-in-depth) — canonical secret shapes (`sk-…`,
+   `ghp_…`, `AKIA…`, PEM keys) and keychain locators are scrubbed before write;
+   a redaction error **refuses** the write (never fail-open).
+
+Reads are scope-checked too (a ref minted under one scope can't be read under
+another), entries shred on page-back (no plaintext-at-rest), and a native named
+pasteboard backend can be **injected** later via the `ColdStore` protocol without
+touching the 0-dependency core.
+
+### Prove it pays — exogenously
+
+`scripts/dogfood-cold-tier.py` is a flag-gated A/B that measures the win via
+Anthropic's own usage fields (`cache_creation_input_tokens` etc.) — comparing
+**total billed tokens** of *(evict → COLD → verbatim restore)* against *(evict →
+re-derive via the LLM)*. It reports COLD a win **iff** the restore arm bills
+fewer tokens — never by counting page-back tokens in isolation (which would
+falsify COLD by construction).
+
 ## Honest limitations
 
 - **It prevents the miss; it doesn't shrink the prefix.** Pair it with
@@ -175,13 +280,30 @@ the loop itself re-uses the cached prefix and never crosses eviction.
 | `TouchResult(ok, cache_read_tokens, ...)` | what your `touch_fn` returns |
 | `CacheEconomics(prefix_tokens, cache_write_mult, cache_read_mult)` | the price model |
 | `net_savings(...)`, `breakeven_resume_probability(...)` | prove (or disprove) the win for your numbers |
+| `ColdTierEconomics(...)`, `should_offload_cold(...)`, `Tier` | the 3-tier (HOT/WARM/COLD) cost-minimiser; COLD only where it net-saves |
+| `FileRingStore(...)`, `ColdStore`, `RingConfig`, `ColdRef` | the private, lossless, 0-dep local COLD store (mode-0600 file ring) |
+| `deny_unknown(...)`, `default_redactor(...)` | fail-closed scope allowlist + secret redaction run before every COLD write |
 
 ## Development
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 37 tests, network-free
+pytest -q          # 95 tests, network-free
 ```
+
+### Open risks (COLD tier — tracked, not hidden)
+
+- **Networked `$HOME` (NFS/SMB):** POSIX advisory locks are documented-unreliable
+  over networked mounts without a working lock daemon. The file ring's
+  concurrency is sound on **local** filesystems; it does not claim safety on a
+  networked home.
+- **`restore_fraction` is a tuning knob, not yet benchmarked:** the break-even
+  inverts on cheap-to-rebuild context; only the live dogfood across real sessions
+  settles the right default.
+- **Double-pay hazard:** if a restored COLD prefix is injected *and* the model
+  then re-reads the source anyway, you pay restore + re-derivation. Treat a
+  paged-back block as authoritative (a prompt-framing contract, not a code
+  guarantee).
 
 ## License
 
