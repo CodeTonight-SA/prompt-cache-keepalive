@@ -1,0 +1,8 @@
+{
+  "name": "prompt-cache-cold-tier",
+  "version": "0.3.0",
+  "description": "Session-boundary COLD context offload: losslessly evict durable context to a private local store and page it back verbatim across /clear and overnight idle. Saves re-derivation tokens, not page-back tokens.",
+  "author": { "name": "CodeTonight" },
+  "license": "MIT",
+  "hooks": "./hooks/hooks.json"
+}

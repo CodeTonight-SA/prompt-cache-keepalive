@@ -1,0 +1,34 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m prompt_cache_keepalive.cc_plugin.session_start"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m prompt_cache_keepalive.cc_plugin.stop"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -m prompt_cache_keepalive.cc_plugin.pre_compact"
+          }
+        ]
+      }
+    ]
+  }
+}
