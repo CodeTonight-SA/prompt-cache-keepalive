@@ -11,7 +11,10 @@ from __future__ import annotations
 import os
 import stat
 import sys
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ModuleNotFoundError:  # 3.9 / 3.10 have no stdlib TOML reader
+    tomllib = None
 from pathlib import Path
 
 import pytest
@@ -111,6 +114,11 @@ def test_no_nonstdlib_import_in_cold_core():
             assert f"import {mod}" not in text
 
 
+@pytest.mark.skipif(
+    tomllib is None,
+    reason="stdlib tomllib is 3.11+; this static pyproject check is version-independent "
+    "(runs on 3.11/3.12) and the runtime import-graph 0-dep check above covers all versions",
+)
 def test_pyproject_dependencies_stay_empty():
     root = Path(__file__).resolve().parent.parent
     data = tomllib.loads((root / "pyproject.toml").read_text())
