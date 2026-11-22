@@ -51,8 +51,8 @@ def test_pem_private_key_block_is_redacted():
 
 
 def test_keychain_locator_is_scrubbed():
-    out = R("token via security find-generic-password -s grip-sudonum-slack -w")
-    assert "grip-sudonum-slack" not in out
+    out = R("token via security find-generic-password -s grip-acme-slack -w")
+    assert "grip-acme-slack" not in out
     assert "find-generic-password" not in out
 
 
