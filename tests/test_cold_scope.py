@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from prompt_cache_keepalive import deny_unknown
+from prompt_cache_keepalive import allow_all_unsafe, deny_unknown
 from prompt_cache_keepalive.coldstore import FileRingStore, RingConfig
 
 POLICY = deny_unknown()
@@ -20,8 +20,6 @@ POLICY = deny_unknown()
     "scope",
     [
         "client",
-        "donna",
-        "sudonum",
         "financials",
         "client-acme",
         "matter-1234",
@@ -31,6 +29,29 @@ POLICY = deny_unknown()
 )
 def test_client_or_financial_scopes_are_denied(scope):
     assert POLICY.is_cold_safe(scope) is False
+
+
+def test_private_denylist_file_adds_a_marker_at_runtime(tmp_path, monkeypatch):
+    # Without PROMPT_CACHE_DENYLIST_FILE set, an arbitrary non-generic scope
+    # carries none of the built-in markers, so the backstop allows it.
+    monkeypatch.delenv("PROMPT_CACHE_DENYLIST_FILE", raising=False)
+    assert allow_all_unsafe().is_cold_safe("examplecorp-session") is True
+
+    # Pointing the env var at a private file naming "examplecorp" extends the
+    # deny set at runtime -- a deployment's own client/product names never
+    # need to live in this shipped source file.
+    denylist = tmp_path / "private-denylist.txt"
+    denylist.write_text("# comment lines and blanks are ignored\n\nexamplecorp\n")
+    monkeypatch.setenv("PROMPT_CACHE_DENYLIST_FILE", str(denylist))
+    assert allow_all_unsafe().is_cold_safe("examplecorp-session") is False
+
+
+def test_missing_private_denylist_file_falls_back_to_the_generic_default(monkeypatch):
+    # An unset or dangling env var is a silent no-op: the generic built-in
+    # categories still deny, and an ordinary scope is still allowed.
+    monkeypatch.setenv("PROMPT_CACHE_DENYLIST_FILE", "/nonexistent/private-denylist.txt")
+    assert allow_all_unsafe().is_cold_safe("financials") is False
+    assert allow_all_unsafe().is_cold_safe("ordinary-session") is True
 
 
 def test_unknown_scope_defaults_to_deny():

@@ -22,20 +22,52 @@ real client-scope detection drives the verdict; the OSS default takes an injecte
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, List, Pattern
 
 # Markers that, if present in a scope tag, mean "client/sensitive — never COLD".
+# Generic risk CATEGORIES only — present in every deployment, never a specific
+# client or product name. A deployment's own private names load at runtime from
+# PROMPT_CACHE_DENYLIST_FILE instead (see ``_private_deny_markers`` below); they
+# never belong in this public source file.
 _DENY_MARKERS: List[Pattern[str]] = [
     re.compile(r"\bclient\b", re.IGNORECASE),
-    re.compile(r"\bdonna\b", re.IGNORECASE),
-    re.compile(r"\bsudonum\b", re.IGNORECASE),
     re.compile(r"\bfinanc", re.IGNORECASE),       # financ(e|ial)
     re.compile(r"\binvoice\b", re.IGNORECASE),
     re.compile(r"\bmatter\b", re.IGNORECASE),      # legal matter
     re.compile(r"\bnda\b", re.IGNORECASE),
 ]
+
+
+def _private_deny_markers() -> List[Pattern[str]]:
+    """Additional deny markers from a private, out-of-repo file (optional).
+
+    ``PROMPT_CACHE_DENYLIST_FILE`` names a text file, one bare word per line
+    (blank lines and ``#`` comments ignored). Each word compiles to the same
+    ``\\bword\\b`` case-insensitive shape as the built-in markers above, so a
+    deployment can deny its own client/product names without ever writing them
+    into this shipped source file.
+
+    Absent env var, or a missing/unreadable file, yields no private markers —
+    the generic built-in list above still applies either way; this layer is
+    additive, never required for the fail-closed default to hold."""
+    path = os.environ.get("PROMPT_CACHE_DENYLIST_FILE")
+    if not path:
+        return []
+    try:
+        lines = Path(path).read_text().splitlines()
+    except OSError:
+        return []
+    markers = []
+    for line in lines:
+        word = line.strip()
+        if not word or word.startswith("#"):
+            continue
+        markers.append(re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE))
+    return markers
 
 
 @dataclass(frozen=True)
@@ -46,7 +78,7 @@ class ColdScopePolicy:
 
 
 def _has_deny_marker(scope: str) -> bool:
-    return any(p.search(scope) for p in _DENY_MARKERS)
+    return any(p.search(scope) for p in _DENY_MARKERS + _private_deny_markers())
 
 
 @dataclass(frozen=True)
